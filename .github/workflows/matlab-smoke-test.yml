@@ -1,0 +1,43 @@
+name: MATLAB R2022b Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      MLM_LICENSE_TOKEN: ${{ secrets.MLM_LICENSE_TOKEN }}
+    steps:
+      - name: Check licensing prerequisites
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [[ "$REPO_PRIVATE" == 'true' && -z "$MLM_LICENSE_TOKEN" ]]; then
+            echo 'Private repository requires a MATLAB batch licensing token.'
+            exit 1
+          fi
+      - name: Setup MATLAB R2022b
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2022b
+          products: Simulink Stateflow
+      - name: Run Simulink smoke test
+        uses: matlab-actions/run-command@v3
+        with:
+          command: |
+            assert(strcmp(version('-release'),'2022b'));
+            disp(version);
+            ver;
+            load_system('simulink');
+            new_system('mvc_smoke');
+            add_block('simulink/Sources/Constant','mvc_smoke/Constant');
+            add_block('simulink/Sinks/Terminator','mvc_smoke/Terminator');
+            add_line('mvc_smoke','Constant/1','Terminator/1');
+            sim('mvc_smoke','StopTime','0.1');
+            close_system('mvc_smoke',0);
+            disp('MVC2027 MATLAB AND SIMULINK READY');
