@@ -1,0 +1,32 @@
+function T = fcn(Treq,s)
+%%#codegen
+%% Public reference only: signed slip feedback, no road model or preview.
+%% Wheel ordering FR FL RR RL. SI units.
+R = %.17g;
+d = %.17g;
+lf = %.17g;
+lr = %.17g;
+Tf = %.17g;
+Tr = %.17g;
+r = s(1);
+delta = s(4);
+vx = s(9);
+beta = min(max(s(10),-0.7),0.7);
+vy = vx*tan(beta);
+wheel = R*[s(5);s(6);s(7);s(8)];
+v = [(vx+d*r/2)*cos(delta)+(vy+lf*r)*sin(delta);
+     (vx-d*r/2)*cos(delta)+(vy+lf*r)*sin(delta);
+     vx+d*r/2;
+     vx-d*r/2];
+T = zeros(4,1);
+limits = [Tf;Tf;Tr;Tr];
+for i=1:4
+    request = max(-limits(i),min(limits(i),Treq(i)));
+    denom = max(1.5,max(abs(wheel(i)),abs(v(i))));
+    slip = (wheel(i)-v(i))/denom;
+    signedSlip = sign(request)*slip;
+    excess = max(0,signedSlip-0.04);
+    scale = 1/(1+25*excess);
+    T(i) = scale*request;
+end
+end
