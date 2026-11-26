@@ -1,0 +1,101 @@
+name: MVC2027 Public Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mvc-benchmark.yml'
+      - 'scripts/run_baseline.m'
+      - 'scripts/aggregate_benchmark.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mvc-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MVC_UPSTREAM_SHA: 165d34380f522b6ef0f3a4d908c8838d1c512cc8
+
+jobs:
+  benchmark:
+    name: Strategy ${{ matrix.strategy }} / wind ${{ matrix.wind }} / road ${{ matrix.road }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        strategy: [1, 2]
+        wind: [0, 1]
+        road: [0, 1]
+    env:
+      MVC_STRATEGY: ${{ matrix.strategy }}
+      MVC_WIND: ${{ matrix.wind }}
+      MVC_ROAD: ${{ matrix.road }}
+      MVC_SOURCE: ${{ github.workspace }}/upstream/SIMULATION_FILES
+      MVC_OUTPUT: ${{ github.workspace }}/benchmark-output
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout pinned official MVC2027 source
+        uses: actions/checkout@v4
+        with:
+          repository: VTSociety/MVC_2027
+          ref: ${{ env.MVC_UPSTREAM_SHA }}
+          path: upstream
+          persist-credentials: false
+      - name: Prepare result directory and verify source
+        run: |
+          mkdir -p "$MVC_OUTPUT"
+          test "$(git -C upstream rev-parse HEAD)" = "$MVC_UPSTREAM_SHA"
+          test -f "$MVC_SOURCE/MVC27_Sim.slx"
+          test -f "$MVC_SOURCE/scoring.m"
+      - name: Setup MATLAB R2022b
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2022b
+          products: Simulink Stateflow
+      - name: Run official model and scoring
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run(fullfile(getenv('GITHUB_WORKSPACE'),'scripts','run_baseline.m'))
+      - name: Verify upstream tracked files unchanged
+        if: always()
+        run: git -C upstream diff --exit-code
+      - name: Upload case results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-s${{ matrix.strategy }}-w${{ matrix.wind }}-r${{ matrix.road }}
+          path: benchmark-output/
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate public-cycle scores
+    runs-on: ubuntu-22.04
+    needs: benchmark
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download case artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: case-*
+          path: benchmark-artifacts
+      - name: Aggregate and validate
+        run: python3 scripts/aggregate_benchmark.py
+      - name: Upload aggregate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-summary
+          path: benchmark-summary/
+          if-no-files-found: warn
+          retention-days: 30
