@@ -1,0 +1,92 @@
+name: MVC2027 V0.1 Public TCS Experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mvc-tcs-reference.yml'
+      - 'experiments/v01/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mvc-tcs-reference-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MVC_UPSTREAM_SHA: 165d34380f522b6ef0f3a4d908c8838d1c512cc8
+
+jobs:
+  experiment:
+    name: TCS / strategy ${{ matrix.strategy }} / wind ${{ matrix.wind }} / road ${{ matrix.road }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        strategy: [1, 2]
+        wind: [0, 1]
+        road: [0, 1]
+    env:
+      MVC_STRATEGY: ${{ matrix.strategy }}
+      MVC_WIND: ${{ matrix.wind }}
+      MVC_ROAD: ${{ matrix.road }}
+      MVC_SOURCE: ${{ github.workspace }}/upstream/SIMULATION_FILES
+      MVC_OUTPUT: ${{ github.workspace }}/experiment-output
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout official source
+        uses: actions/checkout@v4
+        with:
+          repository: VTSociety/MVC_2027
+          ref: ${{ env.MVC_UPSTREAM_SHA }}
+          path: upstream
+          persist-credentials: false
+      - name: Prepare
+        run: |
+          mkdir -p "$MVC_OUTPUT"
+          test "$(git -C upstream rev-parse HEAD)" = "$MVC_UPSTREAM_SHA"
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2022b
+          products: Simulink Stateflow
+      - name: Run TCS reference experiment
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run(fullfile(getenv('GITHUB_WORKSPACE'),'experiments','v01','run_tcs_reference.m'))
+      - name: Verify upstream files unchanged
+        if: always()
+        run: git -C upstream diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tcs-s${{ matrix.strategy }}-w${{ matrix.wind }}-r${{ matrix.road }}
+          path: experiment-output/
+          if-no-files-found: warn
+          retention-days: 14
+  aggregate:
+    name: Compare with measured V0.0 scores
+    runs-on: ubuntu-22.04
+    needs: experiment
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tcs-s*
+          path: case-artifacts
+      - run: python3 experiments/v01/aggregate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tcs-experiment-summary
+          path: experiment-summary/
+          if-no-files-found: warn
+          retention-days: 30
